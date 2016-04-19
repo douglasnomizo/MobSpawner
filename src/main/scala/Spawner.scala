@@ -1,8 +1,13 @@
+import java.util.NoSuchElementException
+
+import akka.actor.SupervisorStrategy.{Escalate, Stop}
 import akka.actor._
 
 import scala.concurrent.duration._
 import scala.util.Random
 
+case object SendWarrior
+case object StopWarrior
 case object Spawn
 case object SpawnCreeper
 case object SpawnZombie
@@ -10,11 +15,13 @@ case object SpawnSpider
 case object SpawnBoss
 case object Hit
 case object Start
+
 case object Tick
 
 case class MonstersCount(value: String)
 
 class ZombieSpawner extends Actor {
+
   def receive = {
     case Spawn =>
       println("Spawning Zombie! Run for your life!")
@@ -65,14 +72,18 @@ class Spawner extends Actor {
     case SpawnBoss =>
       context.actorOf(Props[BossSpawner]) ! Spawn
     case Hit =>
-      val child:ActorRef = Random.shuffle(context.children).head
-      child ! PoisonPill
-      context.unwatch(child)
+      try {
+        val child: ActorRef = Random.shuffle(context.children).head
+        child ! PoisonPill
+        context.unwatch(child)
+      } catch {
+        case e:NoSuchElementException => sender ! StopWarrior
+      }
   }
 }
 
 class Arena(system: ActorSystem, level: Integer) extends Actor {
-  val mobsFactor: Integer = level * 25
+  val mobsFactor: Integer = level * 5
   val spawner = system.actorOf(Props[Spawner])
 
   def receive = {
@@ -82,28 +93,38 @@ class Arena(system: ActorSystem, level: Integer) extends Actor {
         implicit val mobType = Random.shuffle(types).head
         spawner ! mobType
       })
+    case SendWarrior =>
+      context.actorOf(Props(classOf[Warrior]), "warrior")
+    case StopWarrior =>
+      context.child("warrior").map(w => {
+        println("All monsters were destroyed! The arena is safe now. Thanks!")
+        w ! PoisonPill
+      })
     case Hit =>
       spawner ! Hit
   }
 }
 
-class Warrior(arena: ActorRef) extends Actor {
-  import context.dispatcher
-  
-  val tick = context.system.scheduler.schedule(500 millis, 1000 millis, self, Tick)
 
-  override def postStop() = tick.cancel()
+class Warrior extends Actor {
+  import context.dispatcher
+  val tick = context.system.scheduler.schedule(200 millis, 500 millis, self, Tick)
+
+  override def postStop() = {
+    tick.cancel()
+    context.system.terminate()
+  }
 
   def receive = {
     case Tick =>
-      arena ! Hit
+      context.parent ! Hit
   }
 }
 
 object Main extends App {
   val system = ActorSystem("MobSpawner")
-  val level = 5
+  val level = 1
   val arena = system.actorOf(Props(classOf[Arena], system, level))
   arena ! Start
-  val warrior = system.actorOf(Props(classOf[Warrior], arena))
+  arena ! SendWarrior
 }
