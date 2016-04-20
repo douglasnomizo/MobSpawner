@@ -1,0 +1,7 @@
+mysql:
+  image: mysql  
+  container_name: mob-spawner
+  volumes:
+    - ./db/mysql:/var/lib/mysql
+  environment:
+    - MYSQL_ROOT_PASSWORD=pass
